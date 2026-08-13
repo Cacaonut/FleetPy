@@ -81,6 +81,7 @@ class PyPlot(Process):
         self._avg_detour_time = []
         self._accepted_requests = []
         self._rejected_requests = []
+        self._timed_out_requests = []
         
         self._key_to_plot_func = {
             'status_count': self._create_status_count_plot,
@@ -161,6 +162,7 @@ class PyPlot(Process):
         self._avg_detour_time.append(self.shared_dict["avg_detour_time"])
         self._accepted_requests.append(self.shared_dict["accepted_users"])
         self._rejected_requests.append(self.shared_dict["rejected_users"])
+        self._timed_out_requests.append(self.shared_dict.get("timed_out_users", 0))
         #print("here")
         if self.shared_dict.get("plot_1") is not None:
             self._key_to_plot_func[self.shared_dict["plot_1"]](0)
@@ -401,9 +403,15 @@ class PyPlot(Process):
     def _create_service_rate_stack_plot(self, axis_id):
         self.axes[axis_id].set_title("Requests States")
         self.axes[axis_id].set_ylabel("Number of Requests")
-        self.axes[axis_id].stackplot(self._times, self._accepted_requests, self._rejected_requests,
-                                            colors=["green","red"],
-                                            labels = ["accepted","rejected"])
+        is_realtime = self.shared_dict.get("is_realtime", False)
+        if is_realtime:
+            self.axes[axis_id].stackplot(self._times, self._accepted_requests, self._rejected_requests, self._timed_out_requests,
+                                                colors=["green","red","purple"],
+                                                labels = ["accepted","rejected","timed out"])
+        else:
+            self.axes[axis_id].stackplot(self._times, self._accepted_requests, self._rejected_requests,
+                                                colors=["green","red"],
+                                                labels = ["accepted","rejected"])
         self.axes[axis_id].legend(loc="upper left")
         self.axes[axis_id].set_xlabel("Simulation Time [h]")
         # Get the current tick positions

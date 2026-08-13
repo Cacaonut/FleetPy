@@ -208,7 +208,7 @@ class UserState:
 
     def get_user_data(self, time_step):
         if time_step <= self.start_time or time_step >= self.end_time:
-            return {"avg_waiting_time":0,"avg_riding_time":0,"avg_detour_time":0,"accepted_users":0,"rejected_users":0}
+            return {"avg_waiting_time":0,"avg_riding_time":0,"avg_detour_time":0,"accepted_users":0,"rejected_users":0,"timed_out_users":0}
         #print(self.usr_df)
         current_df = self.usr_df[ (self.usr_df["earliest_pickup_time"] <= time_step) & (self.usr_df["earliest_pickup_time"] >= time_step - CUSTOMER_SMOOTH_TIME)]
         current_served_df = current_df[~current_df["pickup_time"].isna()]
@@ -218,14 +218,26 @@ class UserState:
         avg_riding_time = (current_served_df['dropoff_time'] - current_served_df['pickup_time']).mean()
         avg_detour_time = (current_served_df['dropoff_time'] - current_served_df['pickup_time'] - current_served_df['direct_route_travel_time']).mean()
         accepted_users = current_served_df.shape[0]
-        rejected_users = current_df.shape[0] - current_served_df.shape[0]
+        
+        current_unserved_df = current_df[current_df["pickup_time"].isna()]
+        timed_out_mask = pd.Series(False, index=current_unserved_df.index)
+        if "status" in current_unserved_df.columns:
+            timed_out_mask = timed_out_mask | (current_unserved_df["status"] == "timed_out")
+        if "timed_out" in current_unserved_df.columns:
+            timed_out_mask = timed_out_mask | (current_unserved_df["timed_out"] == True) | (current_unserved_df["timed_out"] == 1) | (current_unserved_df["timed_out"].astype(str).str.lower() == "true")
+        if "chosen_operator_id" in current_unserved_df.columns:
+            timed_out_mask = timed_out_mask | (current_unserved_df["chosen_operator_id"] == -2)
+
+        timed_out_users = current_unserved_df[timed_out_mask].shape[0]
+        rejected_users = current_unserved_df[~timed_out_mask].shape[0]
         
         return_df = {
             "avg_waiting_time":avg_waiting_time,
             "avg_riding_time":avg_riding_time,
             "avg_detour_time":avg_detour_time,
             "accepted_users":accepted_users,
-            "rejected_users":rejected_users
+            "rejected_users":rejected_users,
+            "timed_out_users":timed_out_users
         }
         # print(return_df)
         return return_df      
@@ -376,6 +388,7 @@ class Replay(VehicleMovementSimulation):
         self.n_op = None
         self.list_op_dicts = None
         self.poss_veh_states = []
+        self.is_realtime = False
         #
         self.steps_per_real_sec = 1
         self.replay_vehicles = {}       # (op_id, vid) -> ReplayVehicle
@@ -403,6 +416,12 @@ class Replay(VehicleMovementSimulation):
         # ----------------
         print(f"... loading scenario information")
         scenario_parameters, list_operator_attributes, _ = load_scenario_inputs(output_dir)
+        self.is_realtime = (
+            scenario_parameters.get(G_SIM_ENV) == "RealtimeSimulation" or
+            os.path.isfile(os.path.join(output_dir, "rt_request_metrics.csv")) or
+            G_RT_REQUEST_TIMEOUT in scenario_parameters or
+            G_RT_SPEED_FACTOR in scenario_parameters
+        )
         dir_names = get_directory_dict(scenario_parameters, list_operator_attributes)
         replay_mode = scenario_parameters[G_SIM_REPLAY_FLAG]
         if not replay_mode:
@@ -735,7 +754,8 @@ class ReplayPyPlot(Replay):
             avg_detour_time = 0
         accepted_users = user_stats["accepted_users"]
         rejected_users = user_stats["rejected_users"]
-                    
+        timed_out_users = user_stats.get("timed_out_users", 0)
+
         total_parcels = list(list_pos_df['parcels'])
         total_parcels = [int(x) for x in total_parcels]
         total_parcels = sum(total_parcels)
@@ -783,6 +803,8 @@ class ReplayPyPlot(Replay):
                      "total_passengers": total_passengers,
                      "accepted_users": accepted_users,
                      "rejected_users": rejected_users,
+                     "timed_out_users": timed_out_users,
+                     "is_realtime": getattr(self, "is_realtime", False),
                      "end_time": int(self.sim_end_time/self._time_step),
                      "avg_wait_time": avg_wait_time,
                      "avg_ride_time": avg_ride_time,
