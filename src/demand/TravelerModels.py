@@ -171,6 +171,9 @@ class RequestBase(metaclass=ABCMeta):
         record_dict[G_RQ_DO] = self.do_time
         record_dict[G_RQ_FARE] = self.fare
         record_dict[G_RQ_MODAL_STATE] = self.modal_state
+        if getattr(self, "timed_out", False):
+            record_dict["status"] = "timed_out"
+            record_dict["timed_out"] = True
         return self._add_record(record_dict)
 
     def receive_offer(self, operator_id, operator_offer, simulation_time, sc_parameters=None): # TODO remove sc_parameters here
@@ -294,6 +297,15 @@ class RequestBase(metaclass=ABCMeta):
             return True
         else:
             return False
+
+    def set_timed_out(self, sim_time):
+        """Mark this request as timed out (not processed within the real-time timeout threshold).
+        :param sim_time: simulation time at which the timeout occurred
+        :type sim_time: int
+        """
+        self.leave_system_time = sim_time
+        self.chosen_operator_id = -1  # same as rejection for compatibility
+        self.timed_out = True
 
     def cancels_booking(self, sim_time):
         """This method can be used to model customer cancellations after they already accepted an offer once. Remember

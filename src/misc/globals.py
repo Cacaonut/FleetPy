@@ -513,6 +513,10 @@ G_RQ_STATE_FIRSTMILE = 1
 G_RQ_STATE_LASTMILE = 2
 G_RQ_STATE_FIRSTLASTMILE = 3
 
+# realtime simulation parameters
+G_RT_SPEED_FACTOR = "op_realtime_speed_factor"
+G_RT_REQUEST_TIMEOUT = "op_realtime_request_timeout"
+
 # -------------------------------------------------------------------------------------------------------------------- #
 # Mode Choice Model
 # -----------------
