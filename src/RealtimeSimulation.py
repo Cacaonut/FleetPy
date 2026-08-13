@@ -81,16 +81,33 @@ class RealtimeMetrics:
             })
             self.timeout_count += 1
 
-    def record_tick(self, sim_time, duration_s, n_requests):
+    def record_tick(self, sim_time, duration_s, n_requests, speed_factor=1.0, step_budget=1.0, reopt_budget=None):
+        unscaled_duration = duration_s
+        scaled_duration = duration_s * speed_factor
+        if reopt_budget is None:
+            reopt_budget = step_budget
+        is_reopt_tick = (sim_time % reopt_budget == 0) if reopt_budget > 0 else True
+        is_step_lag = scaled_duration > step_budget
+        is_irrecoverable_lag = is_reopt_tick and (scaled_duration > reopt_budget)
         with self._lock:
             self.tick_records.append({
                 "sim_time": sim_time,
-                "tick_duration_s": duration_s,
+                "unscaled_tick_duration_s": unscaled_duration,
+                "scaled_tick_duration_s": scaled_duration,
+                "tick_duration_s": scaled_duration,
                 "requests_processed": n_requests,
+                "step_budget_s": step_budget,
+                "reopt_budget_s": reopt_budget,
+                "is_reopt_tick": is_reopt_tick,
+                "is_lag": is_step_lag,
+                "is_irrecoverable_lag": is_irrecoverable_lag,
             })
-        if duration_s > 1.0:
-            LOG.warning(f"Tick at sim_time={sim_time} took {duration_s:.3f}s (>1s) "
-                        f"— real-time lag detected")
+        if is_irrecoverable_lag:
+            LOG.warning(f"Tick at sim_time={sim_time} took {scaled_duration:.2f}s (sim) / {unscaled_duration:.3f}s (wall) "
+                        f"(reopt budget: {reopt_budget}s sim) — IRRECOVERABLE real-time lag detected")
+        elif is_step_lag:
+            LOG.warning(f"Tick at sim_time={sim_time} took {scaled_duration:.2f}s (sim) / {unscaled_duration:.3f}s (wall) "
+                        f"(step budget: {step_budget}s sim) — minor real-time lag detected")
 
     def save(self, output_dir):
         """Write metrics to CSV files in the output directory."""
@@ -106,36 +123,159 @@ class RealtimeMetrics:
 
         # summary
         if self.request_records:
-            scaled_response_times = [r["scaled_response_time_s"] for r in self.request_records
-                                     if r["status"] == "processed"]
-            unscaled_response_times = [r["unscaled_response_time_s"] for r in self.request_records
-                                       if r["status"] == "processed"]
+            all_records = self.request_records
+            proc_records = [r for r in self.request_records if r["status"] == "processed"]
+            to_records = [r for r in self.request_records if r["status"] == "timed_out"]
+
+            def calc_stats(records, prefix):
+                scaled = [r["scaled_response_time_s"] for r in records]
+                unscaled = [r["unscaled_response_time_s"] for r in records]
+                if not scaled:
+                    return {
+                        f"avg_scaled_response_time_s_{prefix}": 0.0,
+                        f"max_scaled_response_time_s_{prefix}": 0.0,
+                        f"p95_scaled_response_time_s_{prefix}": 0.0,
+                        f"p99_scaled_response_time_s_{prefix}": 0.0,
+                        f"avg_unscaled_response_time_s_{prefix}": 0.0,
+                        f"max_unscaled_response_time_s_{prefix}": 0.0,
+                        f"p95_unscaled_response_time_s_{prefix}": 0.0,
+                        f"p99_unscaled_response_time_s_{prefix}": 0.0,
+                    }
+                return {
+                    f"avg_scaled_response_time_s_{prefix}": float(np.mean(scaled)),
+                    f"max_scaled_response_time_s_{prefix}": float(np.max(scaled)),
+                    f"p95_scaled_response_time_s_{prefix}": float(np.percentile(scaled, 95)),
+                    f"p99_scaled_response_time_s_{prefix}": float(np.percentile(scaled, 99)),
+                    f"avg_unscaled_response_time_s_{prefix}": float(np.mean(unscaled)),
+                    f"max_unscaled_response_time_s_{prefix}": float(np.max(unscaled)),
+                    f"p95_unscaled_response_time_s_{prefix}": float(np.percentile(unscaled, 95)),
+                    f"p99_unscaled_response_time_s_{prefix}": float(np.percentile(unscaled, 99)),
+                }
+
             summary = {
-                "total_requests": len(self.request_records),
-                "processed": len(scaled_response_times),
-                "timed_out": self.timeout_count,
-                # scaled metrics (simulated time = unscaled * speed_factor)
-                "avg_scaled_response_time_s": np.mean(scaled_response_times) if scaled_response_times else 0,
-                "max_scaled_response_time_s": np.max(scaled_response_times) if scaled_response_times else 0,
-                "p95_scaled_response_time_s": np.percentile(scaled_response_times, 95) if scaled_response_times else 0,
-                "p99_scaled_response_time_s": np.percentile(scaled_response_times, 99) if scaled_response_times else 0,
-                # unscaled metrics (actual wall-clock time)
-                "avg_unscaled_response_time_s": np.mean(unscaled_response_times) if unscaled_response_times else 0,
-                "max_unscaled_response_time_s": np.max(unscaled_response_times) if unscaled_response_times else 0,
-                "p95_unscaled_response_time_s": np.percentile(unscaled_response_times, 95) if unscaled_response_times else 0,
-                "p99_unscaled_response_time_s": np.percentile(unscaled_response_times, 99) if unscaled_response_times else 0,
-                # legacy aliases for backwards compatibility
-                "avg_response_time_s": np.mean(scaled_response_times) if scaled_response_times else 0,
-                "max_response_time_s": np.max(scaled_response_times) if scaled_response_times else 0,
+                "total_requests": len(all_records),
+                "processed": len(proc_records),
+                "timed_out": len(to_records),
             }
+
+            # Update with categorized metrics for overall, processed, and timed_out
+            summary.update(calc_stats(all_records, "overall"))
+            summary.update(calc_stats(proc_records, "processed"))
+            summary.update(calc_stats(to_records, "timed_out"))
+
+            # Standard / legacy aliases for backwards compatibility
+            proc_stats = calc_stats(proc_records, "processed")
+            summary.update({
+                "avg_scaled_response_time_s": proc_stats["avg_scaled_response_time_s_processed"],
+                "max_scaled_response_time_s": proc_stats["max_scaled_response_time_s_processed"],
+                "p95_scaled_response_time_s": proc_stats["p95_scaled_response_time_s_processed"],
+                "p99_scaled_response_time_s": proc_stats["p99_scaled_response_time_s_processed"],
+                "avg_unscaled_response_time_s": proc_stats["avg_unscaled_response_time_s_processed"],
+                "max_unscaled_response_time_s": proc_stats["max_unscaled_response_time_s_processed"],
+                "p95_unscaled_response_time_s": proc_stats["p95_unscaled_response_time_s_processed"],
+                "p99_unscaled_response_time_s": proc_stats["p99_unscaled_response_time_s_processed"],
+                "avg_response_time_s": proc_stats["avg_scaled_response_time_s_processed"],
+                "max_response_time_s": proc_stats["max_scaled_response_time_s_processed"],
+            })
+
             if self.tick_records:
-                tick_durations = [t["tick_duration_s"] for t in self.tick_records]
-                summary["avg_tick_duration_s"] = np.mean(tick_durations)
-                summary["max_tick_duration_s"] = np.max(tick_durations)
-                summary["ticks_over_1s"] = sum(1 for d in tick_durations if d > 1.0)
+                scaled_durations = [t["scaled_tick_duration_s"] for t in self.tick_records]
+                unscaled_durations = [t["unscaled_tick_duration_s"] for t in self.tick_records]
+                summary["avg_scaled_tick_duration_s"] = float(np.mean(scaled_durations))
+                summary["max_scaled_tick_duration_s"] = float(np.max(scaled_durations))
+                summary["p95_scaled_tick_duration_s"] = float(np.percentile(scaled_durations, 95))
+                summary["avg_unscaled_tick_duration_s"] = float(np.mean(unscaled_durations))
+                summary["max_unscaled_tick_duration_s"] = float(np.max(unscaled_durations))
+                summary["p95_unscaled_tick_duration_s"] = float(np.percentile(unscaled_durations, 95))
+                # legacy aliases
+                summary["avg_tick_duration_s"] = float(np.mean(scaled_durations))
+                summary["max_tick_duration_s"] = float(np.max(scaled_durations))
+                summary["p95_tick_duration_s"] = float(np.percentile(scaled_durations, 95))
+                summary["lag_ticks"] = sum(1 for t in self.tick_records if t.get("is_lag"))
+                summary["irrecoverable_lag_ticks"] = sum(1 for t in self.tick_records if t.get("is_irrecoverable_lag"))
+                summary["ticks_over_1s"] = summary["lag_ticks"]
             summary_df = pd.DataFrame([summary])
             summary_df.to_csv(os.path.join(output_dir, "rt_summary.csv"), index=False)
             LOG.info(f"Realtime metrics summary: {summary}")
+
+    def print_summary(self):
+        """Format and return a readable string of key real-time metrics for terminal output."""
+        if not self.request_records:
+            return "Real-time Metrics: No requests recorded."
+
+        all_records = self.request_records
+        proc_records = [r for r in self.request_records if r["status"] == "processed"]
+        to_records = [r for r in self.request_records if r["status"] == "timed_out"]
+
+        total = len(all_records)
+        n_proc = len(proc_records)
+        n_to = len(to_records)
+        pct_proc = (n_proc / total * 100) if total else 0.0
+        pct_to = (n_to / total * 100) if total else 0.0
+
+        proc_scaled = [r["scaled_response_time_s"] for r in proc_records]
+        proc_unscaled = [r["unscaled_response_time_s"] for r in proc_records]
+
+        to_scaled = [r["scaled_response_time_s"] for r in to_records]
+        to_unscaled = [r["unscaled_response_time_s"] for r in to_records]
+
+        col_w = 44
+        lines = [
+            "----------------------- Real-time Metrics Summary -----------------------",
+            f"  {'Requests Total':<{col_w}}: {total} (Processed: {n_proc} [{pct_proc:.1f}%], Timed Out: {n_to} [{pct_to:.1f}%])"
+        ]
+
+        if proc_scaled:
+            lines.append(
+                f"  {'Processed Response (s)':<{col_w}}: avg={np.mean(proc_scaled):.2f}s, max={np.max(proc_scaled):.2f}s, p95={np.percentile(proc_scaled, 95):.2f}s "
+                f"(unscaled: avg={np.mean(proc_unscaled):.2f}s, max={np.max(proc_unscaled):.2f}s)"
+            )
+
+        if to_scaled:
+            lines.append(
+                f"  {'Timed Out Wait (s)':<{col_w}}: avg={np.mean(to_scaled):.2f}s, max={np.max(to_scaled):.2f}s, p95={np.percentile(to_scaled, 95):.2f}s "
+                f"(unscaled: avg={np.mean(to_unscaled):.2f}s, max={np.max(to_unscaled):.2f}s)"
+            )
+
+        if self.tick_records:
+            scaled_durations = [t["scaled_tick_duration_s"] for t in self.tick_records]
+            unscaled_durations = [t["unscaled_tick_duration_s"] for t in self.tick_records]
+            lines.append(
+                f"  {'Tick Duration (s)':<{col_w}}: avg={np.mean(scaled_durations):.3f}s, max={np.max(scaled_durations):.3f}s, p95={np.percentile(scaled_durations, 95):.3f}s "
+                f"(unscaled: avg={np.mean(unscaled_durations):.3f}s, max={np.max(unscaled_durations):.3f}s)"
+            )
+
+            total_ticks = len(self.tick_records)
+            reopt_ticks = [t for t in self.tick_records if t.get("is_reopt_tick")]
+            n_reopt = len(reopt_ticks) if reopt_ticks else total_ticks
+
+            step_lags = [t for t in self.tick_records if t.get("is_lag")]
+            irrec_lags = [t for t in self.tick_records if t.get("is_irrecoverable_lag")]
+
+            step_budgets = sorted(list(set(t.get("step_budget_s", 1.0) for t in self.tick_records)))
+            step_b_str = ", ".join(f"{b:.1f}s" for b in step_budgets)
+
+            reopt_budgets = sorted(list(set(t.get("reopt_budget_s", 1.0) for t in self.tick_records)))
+            reopt_b_str = ", ".join(f"{b:.1f}s" for b in reopt_budgets)
+
+            n_step = len(step_lags)
+            pct_step = (n_step / total_ticks * 100) if total_ticks else 0.0
+
+            n_irrec = len(irrec_lags)
+            pct_irrec = (n_irrec / n_reopt * 100) if n_reopt else 0.0
+
+            k_minor = f"Minor Lag Ticks (> {step_b_str} step budget)"
+            k_irrec = f"Irrecoverable Lag (> {reopt_b_str} reopt budget)"
+
+            lines.append(
+                f"  {k_minor:<{col_w}}: {n_step} / {total_ticks} [{pct_step:.1f}%]"
+            )
+            lines.append(
+                f"  {k_irrec:<{col_w}}: {n_irrec} / {n_reopt} reopt steps [{pct_irrec:.1f}%]"
+            )
+
+        lines.append("-------------------------------------------------------------------------")
+        return "\n".join(lines)
 
 
 # -------------------------------------------------------------------------------------------------------------------- #
@@ -329,7 +469,8 @@ class RealtimeSimulation(FleetSimulationBase):
         # 8) record stats + tick metrics
         self.record_stats()
         tick_duration = time.perf_counter() - tick_start
-        self._metrics.record_tick(sim_time, tick_duration, len(valid_requests))
+        reopt_budget = self.scenario_parameters.get(G_RA_REOPT_TS, self.time_step)
+        self._metrics.record_tick(sim_time, tick_duration, len(valid_requests), self._speed_factor, self.time_step, reopt_budget)
 
     # ----- run -----
     def run(self, tqdm_position=0):
@@ -366,6 +507,9 @@ class RealtimeSimulation(FleetSimulationBase):
                 self.save_final_state()
                 if not self.skip_output:
                     self._metrics.save(self.dir_names[G_DIR_OUTPUT])
+                    metrics_str = self._metrics.print_summary()
+                    print(metrics_str)
+                    LOG.info(metrics_str)
                 self._end_realtime_plot()
                 sys.exit(0)
 
@@ -394,6 +538,8 @@ class RealtimeSimulation(FleetSimulationBase):
                   f"{'initialization':>20} : {t_init} h\n" \
                   f"{'simulation':>20} : {t_sim} h\n" \
                   f"{'evaluation':>20} : {t_eval} h\n"
-        print(prt_str)
-        LOG.info(prt_str)
+        metrics_str = self._metrics.print_summary()
+        full_output = f"{prt_str}\n{metrics_str}\n"
+        print(full_output)
+        LOG.info(full_output)
         self._end_realtime_plot()
