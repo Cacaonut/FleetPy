@@ -153,18 +153,16 @@ class RequestBase(metaclass=ABCMeta):
             record_dict[G_RQ_EGRESS] = ""
         else:
             record_dict[G_RQ_EGRESS] = self.t_egress
-        if self.direct_route_travel_time is not None:
-            record_dict[G_RQ_DRT] = self.direct_route_travel_time
-        if self.direct_route_travel_distance is not None:
-            record_dict[G_RQ_DRD] = self.direct_route_travel_distance
+        record_dict[G_RQ_DRT] = self.direct_route_travel_time if self.direct_route_travel_time is not None else ""
+        record_dict[G_RQ_DRD] = self.direct_route_travel_distance if self.direct_route_travel_distance is not None else ""
         # offers
         all_offer_info = []
         for op_id, operator_offer in self.offer.items():
             all_offer_info.append(f"{op_id}:" + operator_offer.to_output_str())
         record_dict[G_RQ_OFFERS] = "|".join(all_offer_info)
         # decision-dependent
-        record_dict[G_RQ_LEAVE_TIME] = self.leave_system_time  # TODO # when only adding stuff conditionally there will
-        record_dict[G_RQ_CHOSEN_OP_ID] = self.chosen_operator_id  # TODO # be errors when evaluating
+        record_dict[G_RQ_LEAVE_TIME] = self.leave_system_time
+        record_dict[G_RQ_CHOSEN_OP_ID] = self.chosen_operator_id
         record_dict[G_RQ_OP_ID] = self.service_opid
         record_dict[G_RQ_VID] = self.service_vid
         record_dict[G_RQ_PU] = self.pu_time
@@ -174,6 +172,9 @@ class RequestBase(metaclass=ABCMeta):
         if getattr(self, "timed_out", False):
             record_dict["status"] = "timed_out"
             record_dict["timed_out"] = True
+        else:
+            record_dict["status"] = ""
+            record_dict["timed_out"] = False
         return self._add_record(record_dict)
 
     def receive_offer(self, operator_id, operator_offer, simulation_time, sc_parameters=None): # TODO remove sc_parameters here
