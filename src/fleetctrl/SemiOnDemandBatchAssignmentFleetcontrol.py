@@ -1068,6 +1068,8 @@ class SemiOnDemandBatchAssignmentFleetcontrol(RidePoolingBatchOptimizationFleetC
                 assigned_plan = VehiclePlan(veh_obj, self.sim_time, self.routing_engine, [])
                 self.assign_vehicle_plan(veh_obj, assigned_plan, simulation_time, force_assign=True,
                                          )
+        self.unassigned_requests_1.pop(rid, None)
+        self.unassigned_requests_2.pop(rid, None)
         super().user_cancels_request(rid, simulation_time)
 
     def _call_time_trigger_request_batch(self, simulation_time):
@@ -1094,9 +1096,11 @@ class SemiOnDemandBatchAssignmentFleetcontrol(RidePoolingBatchOptimizationFleetC
         if self.sim_time % self.optimisation_time_step == 0:
             new_unassigned_requests_2 = {}
             # rids to be assigned in first try
-            for rid in self.unassigned_requests_1.keys():
+            for rid in list(self.unassigned_requests_1.keys()):
                 assigned_vid = self.rid_to_assigned_vid.get(rid, None)
-                prq = self.rq_dict[rid]
+                prq = self.rq_dict.get(rid)
+                if prq is None:
+                    continue
                 if assigned_vid is None:
                     if self.max_wait_time_2 is not None and self.max_wait_time_2 > 0:
                         # retry with new waiting time constraint (no offer returned)
@@ -1111,9 +1115,11 @@ class SemiOnDemandBatchAssignmentFleetcontrol(RidePoolingBatchOptimizationFleetC
                 else:
                     assigned_plan = self.veh_plans[assigned_vid]
                     self._create_user_offer(prq, simulation_time, assigned_vehicle_plan=assigned_plan)
-            for rid in self.unassigned_requests_2.keys():  # check second try rids
+            for rid in list(self.unassigned_requests_2.keys()):  # check second try rids
                 assigned_vid = self.rid_to_assigned_vid.get(rid, None)
-                prq = self.rq_dict[rid]
+                prq = self.rq_dict.get(rid)
+                if prq is None:
+                    continue
                 if assigned_vid is None:  # decline if wait time reached
                     _, _, latest_pu = prq.get_o_stop_info()
                     if simulation_time >= latest_pu:

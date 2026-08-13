@@ -426,6 +426,8 @@ class SoDZonalBatchAssignmentFleetcontrol(SemiOnDemandBatchAssignmentFleetcontro
             del self.dict_to_board_rid[rid]
         if rid in self.dict_to_alight_rid:
             del self.dict_to_alight_rid[rid]
+        self.unassigned_requests_1.pop(rid, None)
+        self.unassigned_requests_2.pop(rid, None)
 
     def time_trigger(self, simulation_time: int, rl_action=None):
         """This method is used to perform time-triggered processes. These are split into the following:
@@ -476,9 +478,11 @@ class SoDZonalBatchAssignmentFleetcontrol(SemiOnDemandBatchAssignmentFleetcontro
         if self.sim_time % self.optimisation_time_step == 0:
             new_unassigned_requests_2 = {}
             # rids to be assigned in first try
-            for rid in self.unassigned_requests_1.keys():
+            for rid in list(self.unassigned_requests_1.keys()):
                 assigned_vid = self.rid_to_assigned_vid.get(rid, None)
-                prq = self.rq_dict[rid]
+                prq = self.rq_dict.get(rid)
+                if prq is None:
+                    continue
                 if assigned_vid is None:
                     if self.max_wait_time_2 is not None and self.max_wait_time_2 > 0:
                         # retry with new waiting time constraint (no offer returned)

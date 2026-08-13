@@ -89,6 +89,8 @@ class RidePoolingBatchAssignmentFleetcontrol(RidePoolingBatchOptimizationFleetCo
             else:
                 assigned_plan = VehiclePlan(veh_obj, self.sim_time, self.routing_engine, [])
                 self.assign_vehicle_plan(veh_obj, assigned_plan, simulation_time, force_assign=True)
+        self.unassigned_requests_1.pop(rid, None)
+        self.unassigned_requests_2.pop(rid, None)
         super().user_cancels_request(rid, simulation_time)
 
     def user_confirms_booking(self, rid, simulation_time):
@@ -130,9 +132,11 @@ class RidePoolingBatchAssignmentFleetcontrol(RidePoolingBatchOptimizationFleetCo
         if self.sim_time % self.optimisation_time_step == 0:
             new_unassigned_requests_2 = {}
             # rids to be assigned in first try
-            for rid in self.unassigned_requests_1.keys():
+            for rid in list(self.unassigned_requests_1.keys()):
                 assigned_vid = self.rid_to_assigned_vid.get(rid, None)
-                prq = self.rq_dict[rid]
+                prq = self.rq_dict.get(rid)
+                if prq is None:
+                    continue
                 if assigned_vid is None:
                     if self.max_wait_time_2 is not None and self.max_wait_time_2 > 0:    # retry with new waiting time constraint (no offer returned)
                         new_unassigned_requests_2[rid] = 1
@@ -146,12 +150,14 @@ class RidePoolingBatchAssignmentFleetcontrol(RidePoolingBatchOptimizationFleetCo
                 else:
                     assigned_plan = self.veh_plans[assigned_vid]
                     self._create_user_offer(prq, simulation_time, assigned_vehicle_plan=assigned_plan)
-            for rid in self.unassigned_requests_2.keys():   # check second try rids
+            for rid in list(self.unassigned_requests_2.keys()):   # check second try rids
                 assigned_vid = self.rid_to_assigned_vid.get(rid, None)
+                prq = self.rq_dict.get(rid)
+                if prq is None:
+                    continue
                 if assigned_vid is None:    # decline
-                    self._create_user_offer(self.rq_dict[rid], simulation_time)
+                    self._create_user_offer(prq, simulation_time)
                 else:
-                    prq = self.rq_dict[rid]
                     assigned_plan = self.veh_plans[assigned_vid]
                     self._create_user_offer(prq, simulation_time, assigned_vehicle_plan=assigned_plan)
             self.unassigned_requests_1 = {}
@@ -209,10 +215,16 @@ class RidePoolingBatchAssignmentFleetcontrol(RidePoolingBatchOptimizationFleetCo
         :return: None, if G_OP_OFF_TW is not given, tuple (new_earlest_pickup_time, new_latest_pick_up_time) for new pickup time constraints
         """
         if self._offer_pickup_time_interval is not None: # set new pickup time constraints based on expected pu-time and offer time interval
-            prq = self.rq_dict[rid]
+            prq = self.rq_dict.get(rid)
+            if prq is None:
+                return None
             _, earliest_pu, latest_pu = prq.get_o_stop_info()
-            vid = self.rid_to_assigned_vid[rid]
-            assigned_plan = self.veh_plans[vid]
+            vid = self.rid_to_assigned_vid.get(rid)
+            if vid is None:
+                return None
+            assigned_plan = self.veh_plans.get(vid)
+            if assigned_plan is None or rid not in assigned_plan.pax_info:
+                return None
             pu_time, _ = assigned_plan.pax_info.get(rid)
             # new_earliest_pu = pu_time 
             # new_latest_pu = pu_time + self._offer_pickup_time_interval

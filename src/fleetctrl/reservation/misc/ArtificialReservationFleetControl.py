@@ -85,9 +85,11 @@ class ArtificialReservationFleetControl(RidePoolingBatchAssignmentFleetcontrol):
             self.RPBO_Module.clear_databases()
 
             # rids to be assigned in first try
-            for rid in self.unassigned_requests_1.keys():
+            for rid in list(self.unassigned_requests_1.keys()):
                 assigned_vid = self.rid_to_assigned_vid.get(rid, None)
-                prq = self.rq_dict[rid]
+                prq = self.rq_dict.get(rid)
+                if prq is None:
+                    continue
                 if assigned_vid is None:
                     if self.new_travel_times_loaded:
                         LOG.debug(f" -> update max travel time for rid {rid}")
