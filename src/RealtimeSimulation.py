@@ -12,10 +12,11 @@ import time
 # ------------------------------------------
 import pandas as pd
 import numpy as np
+from tqdm import tqdm
 
 # src imports
 # -----------
-from src.FleetSimulationBase import FleetSimulationBase
+from src.FleetSimulationBase import FleetSimulationBase, PROGRESS_LOOP, PROGRESS_LOOP_VEHICLE_STATUS
 
 # -------------------------------------------------------------------------------------------------------------------- #
 # global variables
@@ -208,12 +209,15 @@ class RealtimeSimulation(FleetSimulationBase):
         LOG.info("Demand thread finished.")
 
     # ----- fleet control thread -----
-    def _fleet_control_thread(self):
-        """Run fleet control step() at wall-clock pace."""
+    def _fleet_control_thread(self, tqdm_position=0):
+        """Run fleet control step() at wall-clock pace with time-based progress bar."""
         wall_start = time.perf_counter()
         sim_start = self.start_time
 
-        for sim_time in range(self.start_time, self.end_time, self.time_step):
+        sim_times = range(self.start_time, self.end_time, self.time_step)
+        pbar = tqdm(sim_times, position=tqdm_position, desc=self.scenario_parameters.get(G_SCENARIO_NAME)) if PROGRESS_LOOP != "off" else sim_times
+
+        for sim_time in pbar:
             if self._stop_event.is_set():
                 break
 
@@ -226,6 +230,12 @@ class RealtimeSimulation(FleetSimulationBase):
                     break
 
             self.step(sim_time)
+            if PROGRESS_LOOP != "off":
+                vehicle_counts = self.count_fleet_status()
+                info_dict = {"simulation_time": sim_time,
+                             "driving": sum([vehicle_counts[x] for x in G_DRIVING_STATUS])}
+                info_dict.update({x.display_name: vehicle_counts[x] for x in PROGRESS_LOOP_VEHICLE_STATUS})
+                pbar.set_postfix(info_dict)
             self._update_realtime_plots_dict(sim_time)
 
         LOG.info("Fleet control thread finished.")
@@ -337,7 +347,7 @@ class RealtimeSimulation(FleetSimulationBase):
                 target=self._demand_thread, name="rt-demand-feeder", daemon=True
             )
             fleet_thread = threading.Thread(
-                target=self._fleet_control_thread, name="rt-fleet-control", daemon=True
+                target=self._fleet_control_thread, args=(tqdm_position,), name="rt-fleet-control", daemon=True
             )
 
             demand_thread.start()
