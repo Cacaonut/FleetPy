@@ -63,6 +63,8 @@ class PyPlot(Process):
         self.plot_folder: Path = Path(plot_folder) if plot_folder else None
 
         self.fig, self.grid_spec, self.axes = None, None, None
+        self.plot_axes = []
+        self.map_ax = None
         self.plot_extent = plot_extent
         x, y = self.convert_lat_lon(plot_extent[2:4], plot_extent[0:2])
         x[0], y[0] = x[0] - BOARDER_SIZE, y[0] - BOARDER_SIZE
@@ -82,6 +84,12 @@ class PyPlot(Process):
         self._accepted_requests = []
         self._rejected_requests = []
         self._timed_out_requests = []
+        self._queue_lengths = []
+        self._response_times = []
+        self._tick_durations = []
+        self._step_budgets = []
+        self._reopt_budgets = []
+        self._lag_flags = []
         
         self._key_to_plot_func = {
             'status_count': self._create_status_count_plot,
@@ -90,8 +98,12 @@ class PyPlot(Process):
             'occupancy_stack_chart': self._create_occ_stack_plot,
             'waiting_time_average': self._create_avg_wait_time_plot,
             'ride_time_average': self._create_avg_ride_time_plot,
-            'detour_time_average': self._create_avg_detour_time_plot ,
-            'service_rate': self._create_service_rate_stack_plot
+            'detour_time_average': self._create_avg_detour_time_plot,
+            'service_rate': self._create_service_rate_stack_plot,
+            'realtime_architecture': self._create_realtime_architecture_plot,
+            'queue_length': self._create_queue_length_plot,
+            'realtime_lag': self._create_realtime_lag_plot,
+            'queue_list': self._create_queue_list_plot
         }
 
         self.line_alignment = None
@@ -136,40 +148,61 @@ class PyPlot(Process):
         x, y = proj_transformer.transform(lats, lons)
         return LineString(zip(x, y))
 
+    def _get_ax(self, target):
+        if isinstance(target, int):
+            return self.plot_axes[target] if target < len(self.plot_axes) else self.axes[target]
+        return target
+
     def generate_plot_axes(self):
-        fig = plt.figure(1, figsize=FIG_SIZE, tight_layout=True)
-        gs = gridspec.GridSpec(3, 3, figure=fig)
-        gs.update(wspace=0.025, hspace=0.5)
-        axes = [plt.subplot(gs[0, 2]), plt.subplot(gs[1, 2]), plt.subplot(gs[2, 2]), plt.subplot(gs[:, 0:2])]
-        return fig, gs, axes
+        has_second_column = any(self.shared_dict.get(f"plot_{i}") is not None for i in [4, 5, 6])
+        if has_second_column:
+            fig = plt.figure(1, figsize=(18, 9.5), tight_layout=True)
+            gs = gridspec.GridSpec(3, 3, figure=fig, width_ratios=[2.0, 1.0, 1.0])
+            gs.update(wspace=0.18, hspace=0.45)
+            self.plot_axes = [
+                plt.subplot(gs[0, 1]), plt.subplot(gs[1, 1]), plt.subplot(gs[2, 1]),
+                plt.subplot(gs[0, 2]), plt.subplot(gs[1, 2]), plt.subplot(gs[2, 2])
+            ]
+            self.map_ax = plt.subplot(gs[:, 0])
+        else:
+            fig = plt.figure(1, figsize=FIG_SIZE, tight_layout=True)
+            gs = gridspec.GridSpec(3, 3, figure=fig)
+            gs.update(wspace=0.025, hspace=0.5)
+            self.plot_axes = [
+                plt.subplot(gs[0, 2]), plt.subplot(gs[1, 2]), plt.subplot(gs[2, 2])
+            ]
+            self.map_ax = plt.subplot(gs[:, 0:2])
+        self.axes = self.plot_axes + [self.map_ax]
+        return fig, gs, self.axes
 
     def draw_plots(self):
-        #print("draw")
-        # color_list = ['blue','orange','green','red','purple','beige']
-            
         self._times.append(self.shared_dict["sim_time_float"])
-        for k, v in self.shared_dict["status_counts"].items():
+        for k, v in self.shared_dict.get("status_counts", {}).items():
             if self._state_counts.get(k) is None:
                 self._state_counts[k] = []
             self._state_counts[k].append(v)
-        for k, v in self.shared_dict["pax_info"].items():
+        for k, v in self.shared_dict.get("pax_info", {}).items():
             if self._pax_counts.get(k) is None:
                 self._pax_counts[k] = []
             self._pax_counts[k].append(v)
-        self._avg_occ.append(self.shared_dict["avg_pax"])
-        self._avg_wait_time.append(self.shared_dict["avg_wait_time"])
-        self._avg_ride_time.append(self.shared_dict["avg_ride_time"])
-        self._avg_detour_time.append(self.shared_dict["avg_detour_time"])
-        self._accepted_requests.append(self.shared_dict["accepted_users"])
-        self._rejected_requests.append(self.shared_dict["rejected_users"])
+        self._avg_occ.append(self.shared_dict.get("avg_pax", 0))
+        self._avg_wait_time.append(self.shared_dict.get("avg_wait_time", 0))
+        self._avg_ride_time.append(self.shared_dict.get("avg_ride_time", 0))
+        self._avg_detour_time.append(self.shared_dict.get("avg_detour_time", 0))
+        self._accepted_requests.append(self.shared_dict.get("accepted_users", 0))
+        self._rejected_requests.append(self.shared_dict.get("rejected_users", 0))
         self._timed_out_requests.append(self.shared_dict.get("timed_out_users", 0))
-        #print("here")
-        if self.shared_dict.get("plot_1") is not None:
-            self._key_to_plot_func[self.shared_dict["plot_1"]](0)
-        if self.shared_dict.get("plot_2") is not None:
-            self._key_to_plot_func[self.shared_dict["plot_2"]](1)
-        if self.shared_dict.get("plot_3") is not None:
-            self._key_to_plot_func[self.shared_dict["plot_3"]](2)
+        self._queue_lengths.append(self.shared_dict.get("queue_length", 0))
+        self._response_times.append(self.shared_dict.get("response_time", 0.0))
+        self._tick_durations.append(self.shared_dict.get("tick_duration", 0.0))
+        self._step_budgets.append(self.shared_dict.get("step_budget", 1.0))
+        self._reopt_budgets.append(self.shared_dict.get("reopt_budget", 1.0))
+        self._lag_flags.append(self.shared_dict.get("is_lag", False))
+
+        for idx, ax in enumerate(self.plot_axes):
+            plot_key = self.shared_dict.get(f"plot_{idx + 1}")
+            if plot_key and plot_key in self._key_to_plot_func:
+                self._key_to_plot_func[plot_key](ax)
             
         if self.shared_dict['map_plot'] == "occupancy" and self.shared_dict['parcels']:
             possible_status = ['0 (route)','1','2','3','4','0 (reposition)','idle']
@@ -248,29 +281,27 @@ class PyPlot(Process):
 
         axes = self.axes
 
+        map_ax = self.map_ax
+
         # Plot PT line alignment
         if self.line_alignment is not None:
-            axes[3].plot(self.first_part_x, self.first_part_y, color="black", linewidth=0.5, zorder=1)
-            axes[3].plot(self.second_part_x, self.second_part_y, color="black", linewidth=0.5, linestyle="--", zorder=1)
-
+            map_ax.plot(self.first_part_x, self.first_part_y, color="black", linewidth=0.5, zorder=1)
+            map_ax.plot(self.second_part_x, self.second_part_y, color="black", linewidth=0.5, linestyle="--", zorder=1)
 
         # Plot the data on the map
         ### Plot the vehicle status statistics
         ###
-        axes[3].axis(self.plot_extent_3857)
-        axes[3].set_xlim(self.plot_extent_3857[:2])
-        axes[3].set_ylim(self.plot_extent_3857[2:])
-        passengers = self.shared_dict["total_passengers"]
-        parcels = self.shared_dict["total_parcels"]
-        mode = "passengers" if self.shared_dict['passengers'] else "parcels"
-        if not self.shared_dict['parcels'] and not self.shared_dict['passengers']:
+        map_ax.axis(self.plot_extent_3857)
+        map_ax.set_xlim(self.plot_extent_3857[:2])
+        map_ax.set_ylim(self.plot_extent_3857[2:])
+        passengers = self.shared_dict.get("total_passengers", 0)
+        parcels = self.shared_dict.get("total_parcels", 0)
+        mode = "passengers" if self.shared_dict.get('passengers') else "parcels"
+        if not self.shared_dict.get('parcels') and not self.shared_dict.get('passengers'):
             mode = "pax"
-        # axes[3].text(0.87,0.97, f"Mode: {mode}"
-        #              f"\n Number of passengers: {passengers} \n Number of parcels = {parcels} ",
-        #              transform=axes[3].transAxes)
-        axes[3].text(0.8, 0.97, f"\n Number of passengers: {passengers}",
-                     transform=axes[3].transAxes)
-        ctx.add_basemap(axes[3], source=self.bg_map_path)
+        map_ax.text(0.8, 0.97, f"\n Number of passengers: {passengers}",
+                     transform=map_ax.transAxes)
+        ctx.add_basemap(map_ax, source=self.bg_map_path)
 
         vehicle_df = self.shared_dict["veh_coord_status_df"]
 
@@ -280,13 +311,12 @@ class PyPlot(Process):
             if coords:
                 lons, lats = list(zip(*coords))
                 x, y = self.convert_lat_lon(lats, lons)
-            axes[3].scatter(x, y, s=VEHICLE_POINT_SIZE, label=possible_status[i],color = color_list[i])
-        axes[3].legend(loc="lower left")
-        axes[3].axis('off')
+            map_ax.scatter(x, y, s=VEHICLE_POINT_SIZE, label=possible_status[i],color = color_list[i])
+        map_ax.legend(loc="lower left")
+        map_ax.axis('off')
         rounded_simulation_time = self.shared_dict["simulation_time"] - timedelta(microseconds=self.shared_dict["simulation_time"].microsecond)
         str_simulation_time = "Time: " + rounded_simulation_time.strftime("%H:%M:%S")
-        axes[3].set_title(str_simulation_time)
-        
+        map_ax.set_title(str_simulation_time)
 
     def save_single_plot(self, datetime_stamp: tp.Union[str, datetime]):
         if self.fig is None:
@@ -329,98 +359,260 @@ class PyPlot(Process):
         plt.show()
         
     def _create_occ_stack_plot(self, axis_id):
-        self.axes[axis_id ].set_title("Occupancy Stack Chart")
-        self.axes[axis_id ].set_ylabel("Number Vehicles")
+        ax = self._get_ax(axis_id)
+        ax.set_title("Occupancy Stack Chart")
+        ax.set_ylabel("Number Vehicles")
         list_list_values = [self._pax_counts[k] for k in ['0 (route)','1','2','3','4', '0 (reposition)','idle']]
-        self.axes[axis_id ].stackplot(self._times, *list_list_values,
-                                            colors=OCCUPANCY_COLOR_LIST,
-                                            labels = ['0 (route)','1','2','3','4','0 (reposition)','idle' ])
-        self.axes[axis_id ].legend(loc="upper left")
-        self.axes[axis_id ].set_xlabel("Simulation Time [h]")
-        self.axes[axis_id ].tick_params(axis="x", which="both", labelbottom=True)
-        self.axes[axis_id ].tick_params(axis="y", which="both", labelleft=True)
+        ax.stackplot(self._times, *list_list_values,
+                     colors=OCCUPANCY_COLOR_LIST,
+                     labels = ['0 (route)','1','2','3','4','0 (reposition)','idle' ])
+        ax.legend(loc="upper left")
+        ax.set_xlabel("Simulation Time [h]")
+        ax.tick_params(axis="x", which="both", labelbottom=True)
+        ax.tick_params(axis="y", which="both", labelleft=True)
         
-        # Get the current tick positions
-        xticks = self.axes[axis_id ].get_xticks()
-
-        # Filter out ticks outside the plot limits
-        s, e = self.axes[axis_id ].get_xlim()
+        xticks = ax.get_xticks()
+        s, e = ax.get_xlim()
         max_xlim = s + 0.9 * (e - s)
         filtered_xticks = [tick for tick in xticks if s <= tick <= max_xlim]
-
-        # Set the filtered ticks
-        self.axes[axis_id ].set_xticks(filtered_xticks)
+        ax.set_xticks(filtered_xticks)
         
     def _create_status_count_plot(self, axis_id):
-        self.axes[axis_id ].set_title("Route Status Counts")
-        self.axes[axis_id ].bar(self.shared_dict["status_counts"].keys(), 
-                                    self.shared_dict["status_counts"].values(),
-                                    color = STATUS_COLOR_LIST)
-        self.axes[axis_id ].set_ylim(0,len(self.shared_dict["veh_coord_status_df"]))
-        self.axes[axis_id ].set_xticks(list(self.shared_dict["status_counts"].keys()))
+        ax = self._get_ax(axis_id)
+        ax.set_title("Route Status Counts")
+        ax.bar(self.shared_dict["status_counts"].keys(), 
+               self.shared_dict["status_counts"].values(),
+               color = STATUS_COLOR_LIST)
+        ax.set_ylim(0, len(self.shared_dict["veh_coord_status_df"]))
+        ax.set_xticks(list(self.shared_dict["status_counts"].keys()))
         xtick_labels = [str(x) if len(str(x)) < 5 else "\n" + str(x) for x in self.shared_dict["status_counts"].keys()]
-        self.axes[axis_id ].set_xticklabels(xtick_labels, rotation=0)
+        ax.set_xticklabels(xtick_labels, rotation=0)
         
     def _create_occ_count_plot(self, axis_id):
-        self.axes[axis_id ].set_title("Occupancy Counts")
-        ks = [ '0 (route)','1','2','3','4', '0 (reposition)','idle' ]
-        self.axes[axis_id ].bar(ks, 
-                                    [self.shared_dict["pax_info"][k] for k in ks],
-                                    color = OCCUPANCY_COLOR_LIST)
-        self.axes[axis_id ].set_ylim(0,len(self.shared_dict["veh_coord_status_df"]))
-        self.axes[axis_id ].set_xticks(ks)
+        ax = self._get_ax(axis_id)
+        ax.set_title("Occupancy Counts")
+        ks = ['0 (route)','1','2','3','4', '0 (reposition)','idle']
+        ax.bar(ks, 
+               [self.shared_dict["pax_info"][k] for k in ks],
+               color = OCCUPANCY_COLOR_LIST)
+        ax.set_ylim(0, len(self.shared_dict["veh_coord_status_df"]))
+        ax.set_xticks(ks)
         xtick_labels = [str(x) if len(str(x)) < 5 else "\n" + str(x) for x in ks]
-        self.axes[axis_id ].set_xticklabels(xtick_labels, rotation=0)
-        self.axes[axis_id ].set_xlabel("Occupancy")
-        self.axes[axis_id ].set_ylabel("Number of Vehicles")
+        ax.set_xticklabels(xtick_labels, rotation=0)
+        ax.set_xlabel("Occupancy")
+        ax.set_ylabel("Number of Vehicles")
         
     def _create_avg_occ_plot(self, axis_id):
-        self.axes[axis_id].set_title("Average Occupancy")
-        self.axes[axis_id].plot(self._times, self._avg_occ)
-        self.axes[axis_id].set_xlabel("Simulation Time [h]")
-        self.axes[axis_id].set_ylabel("Average Occupancy")
-        #self.axes[axis_id].legend(loc="upper left")
+        ax = self._get_ax(axis_id)
+        ax.set_title("Average Occupancy")
+        ax.plot(self._times, self._avg_occ)
+        ax.set_xlabel("Simulation Time [h]")
+        ax.set_ylabel("Average Occupancy")
         
     def _create_avg_wait_time_plot(self, axis_id):
-        self.axes[axis_id].set_title("Average Waiting Time")
-        self.axes[axis_id].set_ylabel("Waiting Time [s]")
-        self.axes[axis_id].set_xlabel("Simulation Time [h]")
-        self.axes[axis_id].plot(self._times, self._avg_wait_time)
+        ax = self._get_ax(axis_id)
+        ax.set_title("Average Waiting Time")
+        ax.set_ylabel("Waiting Time [s]")
+        ax.set_xlabel("Simulation Time [h]")
+        ax.plot(self._times, self._avg_wait_time)
         
     def _create_avg_ride_time_plot(self, axis_id):
-        print("ride times", self._avg_ride_time)
-        self.axes[axis_id].set_title("Average Ride Time")
-        self.axes[axis_id].set_ylabel("Ride Time [s]")
-        self.axes[axis_id].set_xlabel("Simulation Time [h]")
-        self.axes[axis_id].plot(self._times, self._avg_ride_time)
+        ax = self._get_ax(axis_id)
+        ax.set_title("Average Ride Time")
+        ax.set_ylabel("Ride Time [s]")
+        ax.set_xlabel("Simulation Time [h]")
+        ax.plot(self._times, self._avg_ride_time)
         
     def _create_avg_detour_time_plot(self, axis_id):
-        self.axes[axis_id].set_title("Average Detour Time")
-        self.axes[axis_id].set_ylabel("Detour Time [s]")
-        self.axes[axis_id].set_xlabel("Simulation Time [h]")
-        self.axes[axis_id].plot(self._times, self._avg_detour_time)
+        ax = self._get_ax(axis_id)
+        ax.set_title("Average Detour Time")
+        ax.set_ylabel("Detour Time [s]")
+        ax.set_xlabel("Simulation Time [h]")
+        ax.plot(self._times, self._avg_detour_time)
         
     def _create_service_rate_stack_plot(self, axis_id):
-        self.axes[axis_id].set_title("Requests States")
-        self.axes[axis_id].set_ylabel("Number of Requests")
+        ax = self._get_ax(axis_id)
+        ax.set_title("Requests States")
+        ax.set_ylabel("Number of Requests")
         is_realtime = self.shared_dict.get("is_realtime", False)
         if is_realtime:
-            self.axes[axis_id].stackplot(self._times, self._accepted_requests, self._rejected_requests, self._timed_out_requests,
-                                                colors=["green","red","purple"],
-                                                labels = ["accepted","rejected","timed out"])
+            ax.stackplot(self._times, self._accepted_requests, self._rejected_requests, self._timed_out_requests,
+                         colors=["green","red","purple"],
+                         labels = ["accepted","rejected","timed out"])
         else:
-            self.axes[axis_id].stackplot(self._times, self._accepted_requests, self._rejected_requests,
-                                                colors=["green","red"],
-                                                labels = ["accepted","rejected"])
-        self.axes[axis_id].legend(loc="upper left")
-        self.axes[axis_id].set_xlabel("Simulation Time [h]")
-        # Get the current tick positions
-        xticks = self.axes[axis_id ].get_xticks()
-
-        # Filter out ticks outside the plot limits
-        s, e = self.axes[axis_id ].get_xlim()
+            ax.stackplot(self._times, self._accepted_requests, self._rejected_requests,
+                         colors=["green","red"],
+                         labels = ["accepted","rejected"])
+        ax.legend(loc="upper left")
+        ax.set_xlabel("Simulation Time [h]")
+        xticks = ax.get_xticks()
+        s, e = ax.get_xlim()
         max_xlim = s + 0.9 * (e - s)
         filtered_xticks = [tick for tick in xticks if s <= tick <= max_xlim]
+        ax.set_xticks(filtered_xticks)
 
-        # Set the filtered ticks
-        self.axes[axis_id ].set_xticks(filtered_xticks)
+    def _create_realtime_architecture_plot(self, axis_id):
+        ax = self._get_ax(axis_id)
+        ax.set_title("Realtime Architecture & Queue", fontsize=12)
+        ax.axis("off")
+        
+        q_len = self.shared_dict.get("queue_length", 0)
+        resp_t = self.shared_dict.get("response_time", 0.0)
+        tick_d = self.shared_dict.get("tick_duration", 0.0)
+        step_b = self.shared_dict.get("step_budget", 1.0)
+        is_lag = self.shared_dict.get("is_lag", False)
+        
+        # Status Badge
+        if is_lag:
+            status_text = f"TICK LAG ({tick_d:.2f}s > {step_b:.1f}s)"
+            status_bg = "#ffcccc"
+            status_fg = "#990000"
+        else:
+            status_text = f"REAL-TIME OK ({tick_d:.2f}s < {step_b:.1f}s)"
+            status_bg = "#d4edda"
+            status_fg = "#155724"
+            
+        ax.text(0.5, 0.88, status_text, ha="center", va="center", fontsize=8.5, fontweight="bold",
+                color=status_fg, bbox=dict(boxstyle="round,pad=0.25", facecolor=status_bg, edgecolor=status_fg, lw=1.0),
+                transform=ax.transAxes)
+        
+        # Flow Schematic
+        ax.text(0.16, 0.55, "Demand\nThread", ha="center", va="center", fontsize=7.5,
+                bbox=dict(boxstyle="round,pad=0.35", facecolor="#e8f4f8", edgecolor="#2b7bba", lw=1.1),
+                transform=ax.transAxes)
+                
+        ax.annotate("", xy=(0.35, 0.55), xytext=(0.28, 0.55), xycoords="axes fraction", textcoords="axes fraction",
+                    arrowprops=dict(arrowstyle="->", lw=1.4, color="#444444"))
+                    
+        q_box_color = "#fff3cd" if q_len == 0 else "#ffeeba"
+        q_border = "#856404" if q_len > 0 else "#6c757d"
+        ax.text(0.50, 0.55, f"Request\nQueue\n[{q_len} req]", ha="center", va="center", fontsize=8, fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.35", facecolor=q_box_color, edgecolor=q_border, lw=1.3),
+                transform=ax.transAxes)
+                
+        ax.annotate("", xy=(0.72, 0.55), xytext=(0.65, 0.55), xycoords="axes fraction", textcoords="axes fraction",
+                    arrowprops=dict(arrowstyle="->", lw=1.4, color="#444444"))
+                    
+        ax.text(0.84, 0.55, "Fleet\nControl", ha="center", va="center", fontsize=7.5,
+                bbox=dict(boxstyle="round,pad=0.35", facecolor="#e8f4f8", edgecolor="#2b7bba", lw=1.1),
+                transform=ax.transAxes)
+                
+        # Response time label directly beneath the Queue box
+        ax.text(0.50, 0.35, f"Avg Response: {resp_t:.2f}s", ha="center", va="center", fontsize=7.5, color="#555555",
+                transform=ax.transAxes)
+                
+        # Bottom Status Line: Realtime Request Outcomes (Option 1)
+        rt_injected = self.shared_dict.get("rt_injected", 0)
+        rt_processed = self.shared_dict.get("rt_processed", 0)
+        rt_timed_out = self.shared_dict.get("rt_timed_out", 0)
+        to_pct = (rt_timed_out / rt_injected * 100) if rt_injected > 0 else 0.0
+        
+        metrics_str = f"Injected: {rt_injected} | Processed: {rt_processed} | Timed Out: {rt_timed_out} ({to_pct:.1f}%)"
+        ax.text(0.5, 0.12, metrics_str, ha="center", va="center", fontsize=7.5, color="#333333",
+                bbox=dict(boxstyle="square,pad=0.25", facecolor="#f8f9fa", edgecolor="#ced4da", lw=0.8),
+                transform=ax.transAxes)
+
+    def _create_queue_length_plot(self, axis_id):
+        ax = self._get_ax(axis_id)
+        ax.set_title("Request Queue Backlog")
+        ax.set_ylabel("Queue Length [req]")
+        ax.set_xlabel("Simulation Time [h]")
+        ax.plot(self._times, self._queue_lengths, color="darkorange", lw=1.8, label="Queue Backlog")
+        ax.tick_params(axis="x", which="both", labelbottom=True)
+        ax.tick_params(axis="y", which="both", labelleft=True)
+        if self._queue_lengths:
+            max_q = max(self._queue_lengths)
+            ax.set_ylim(0, max(5, int(max_q * 1.2) + 1))
+
+    def _create_realtime_lag_plot(self, axis_id):
+        ax = self._get_ax(axis_id)
+        ax.set_title("Real-Time Tick Duration & Lag")
+        ax.set_ylabel("Duration [s]")
+        ax.set_xlabel("Simulation Time [h]")
+        
+        if self._tick_durations and self._times:
+            # Determine bar width dynamically based on time spacing
+            if len(self._times) > 1:
+                dt = (self._times[-1] - self._times[0]) / max(len(self._times) - 1, 1)
+                bar_width = max(dt * 0.85, 0.0002)
+            else:
+                bar_width = 0.002
+
+            # Color bars: Green = within budget, Yellow = exceeded step budget, Red = exceeded reopt budget
+            bar_colors = []
+            for i, dur in enumerate(self._tick_durations):
+                step_b = self._step_budgets[i] if i < len(self._step_budgets) else 1.0
+                reopt_b = self._reopt_budgets[i] if i < len(self._reopt_budgets) else step_b
+                if dur > reopt_b:
+                    bar_colors.append("#dc3545")  # Red: exceeded reopt budget
+                elif dur > step_b:
+                    bar_colors.append("#ffc107")  # Yellow: exceeded step budget
+                else:
+                    bar_colors.append("#28a745")  # Green: default / on time
+
+            ax.bar(self._times, self._tick_durations, width=bar_width, color=bar_colors, align="center")
+
+        # Budget reference lines
+        if self._step_budgets:
+            ax.plot(self._times, self._step_budgets, color="#e6b800", linestyle="--", lw=1.3, label="Step Budget")
+        if self._reopt_budgets:
+            ax.plot(self._times, self._reopt_budgets, color="#dc3545", linestyle="--", lw=1.3, label="Reopt Budget")
+
+        ax.legend(loc="upper right", fontsize=7)
+        ax.tick_params(axis="x", which="both", labelbottom=True)
+        ax.tick_params(axis="y", which="both", labelleft=True)
+        if self._tick_durations:
+            max_t = max(max(self._tick_durations), max(self._reopt_budgets) if self._reopt_budgets else 1.0, max(self._step_budgets) if self._step_budgets else 1.0)
+            ax.set_ylim(0, max(0.5, max_t * 1.25))
+
+    def _create_queue_list_plot(self, axis_id):
+        ax = self._get_ax(axis_id)
+        ax.set_title("Request Queue Items", fontsize=12)
+        
+        queue_reqs = self.shared_dict.get("queue_requests", [])
+        max_slots = max(5, len(queue_reqs))
+        ax.set_ylim(-0.8, max_slots - 0.2)
+        ax.set_yticks([])
+        ax.tick_params(left=False, labelleft=False)
+        ax.set_xlabel("Time Since Injection [s]")
+        ax.tick_params(axis="x", which="both")
+
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor="#fd7e14", label="Waiting"),
+            Patch(facecolor="#0d6efd", label="Processing"),
+            Patch(facecolor="#6f42c1", label="Timed Out")
+        ]
+        ax.legend(handles=legend_elements, loc="upper right", fontsize=6.5, framealpha=0.85)
+
+        if not queue_reqs:
+            ax.text(0.5, 0.5, "Queue is empty\n(0 active requests)", ha="center", va="center", fontsize=9, color="#6c757d", transform=ax.transAxes)
+            ax.set_xlim(0, 15)
+            return
+
+        elapsed = [r["elapsed_s"] for r in queue_reqs]
+        states = [r["state"] for r in queue_reqs]
+
+        # Color mapping:
+        # waiting -> orange (#fd7e14)
+        # processing -> blue (#0d6efd)
+        # timed_out -> purple (#6f42c1)
+        # processed -> green (#198754)
+        color_map = {
+            "waiting": "#fd7e14",
+            "processing": "#0d6efd",
+            "timed_out": "#6f42c1",
+            "processed": "#198754"
+        }
+        bar_colors = [color_map.get(s, "#fd7e14") for s in states]
+
+        y_pos = list(range(len(queue_reqs)))
+        bars = ax.barh(y_pos, elapsed, color=bar_colors, height=0.6, align="center")
+
+        # Label each bar with elapsed seconds and state tag
+        for bar, el, state in zip(bars, elapsed, states):
+            tag = "wait" if state == "waiting" else ("proc" if state == "processing" else ("timeout" if state == "timed_out" else "done"))
+            ax.text(bar.get_width() + 0.3, bar.get_y() + bar.get_height() / 2, f"{el:.1f}s [{tag}]", va="center", ha="left", fontsize=6.5, color="#333333")
+
+        max_x = max(elapsed) if elapsed else 10
+        ax.set_xlim(0, max(15, max_x * 1.35))

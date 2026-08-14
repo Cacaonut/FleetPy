@@ -506,6 +506,30 @@ class Replay(VehicleMovementSimulation):
         self.active_nodes_gdf = self.node_gdf[self.node_gdf["node_index"].isin(user_nodes)]
 
         print(" ... initiation successful")
+        self.rt_rq_df = None
+        self.rt_tick_df = None
+        if self.is_realtime:
+            rt_rq_f = os.path.join(output_dir, "rt_request_metrics.csv")
+            if os.path.isfile(rt_rq_f):
+                try:
+                    self.rt_rq_df = pd.read_csv(rt_rq_f)
+                    if "request_id" in usr_stats_df.columns and "rq_time" in usr_stats_df.columns:
+                        self.rt_rq_df = pd.merge(self.rt_rq_df, usr_stats_df[["request_id", "rq_time"]], left_on="rid", right_on="request_id", how="left")
+                        self.rt_rq_df["sim_enqueue_time"] = self.rt_rq_df["rq_time"].fillna(self.sim_start_time)
+                    elif "request_id" in usr_stats_df.columns and "earliest_pickup_time" in usr_stats_df.columns:
+                        self.rt_rq_df = pd.merge(self.rt_rq_df, usr_stats_df[["request_id", "earliest_pickup_time"]], left_on="rid", right_on="request_id", how="left")
+                        self.rt_rq_df["sim_enqueue_time"] = self.rt_rq_df["earliest_pickup_time"].fillna(self.sim_start_time)
+                    else:
+                        self.rt_rq_df["sim_enqueue_time"] = self.sim_start_time
+                    self.rt_rq_df["sim_dequeue_time"] = self.rt_rq_df["sim_enqueue_time"] + self.rt_rq_df["scaled_response_time_s"]
+                except Exception as e:
+                    print(f"Warning: Could not parse rt_request_metrics.csv: {e}")
+            rt_tick_f = os.path.join(output_dir, "rt_tick_metrics.csv")
+            if os.path.isfile(rt_tick_f):
+                try:
+                    self.rt_tick_df = pd.read_csv(rt_tick_f)
+                except Exception as e:
+                    print(f"Warning: Could not parse rt_tick_metrics.csv: {e}")
         self._sc_loaded = True
 
     @property
@@ -616,7 +640,9 @@ class Replay(VehicleMovementSimulation):
 
 class ReplayPyPlot(Replay):
     def __init__(self, live_plot: bool = True, create_images: bool = True,
-                 parcels = False,passengers = False,color_list=False,map_plot=None, plot_1=None, plot_2=None, plot_3=None,plot_args="111000"):
+                 parcels = False,passengers = False,color_list=False,map_plot=None,
+                 plot_1=None, plot_2=None, plot_3=None, plot_4=None, plot_5=None, plot_6=None,
+                 plot_args="111000"):
         """ Class for python based visualization of the simulation results
 
         :param live_plot: If True, the plots are displayed in real time using a separate CPU process. If False,
@@ -642,6 +668,9 @@ class ReplayPyPlot(Replay):
         self.plot_1=plot_1
         self.plot_2=plot_2
         self.plot_3=plot_3
+        self.plot_4=plot_4
+        self.plot_5=plot_5
+        self.plot_6=plot_6
         self.plot_args = plot_args
         self.color_list = color_list
         self.output_dir = None
@@ -650,6 +679,20 @@ class ReplayPyPlot(Replay):
         self.output_dir = output_dir
         super().load_scenario(output_dir, start_time_in_seconds=start_time_in_seconds,
                               end_time_in_seconds=end_time_in_seconds,parcels=self.parcels,passengers=self.passengers)
+        
+        # Apply defaults based on simulation mode if not explicitly set
+        if self.is_realtime:
+            if self.plot_1 is None: self.plot_1 = "occupancy_count"
+            if self.plot_2 is None: self.plot_2 = "service_rate"
+            if self.plot_3 is None: self.plot_3 = "occupancy_stack_chart"
+            if self.plot_4 is None: self.plot_4 = "realtime_architecture"
+            if self.plot_5 is None: self.plot_5 = "queue_list"
+            if self.plot_6 is None: self.plot_6 = "realtime_lag"
+        else:
+            if self.plot_1 is None: self.plot_1 = "occupancy_count"
+            if self.plot_2 is None: self.plot_2 = "service_rate"
+            if self.plot_3 is None: self.plot_3 = "occupancy_stack_chart"
+
         self.plots_dir = Path(output_dir).joinpath("plots")
         # check if plots_dir exists and create it if not
         if not self.plots_dir.exists():
@@ -789,6 +832,61 @@ class ReplayPyPlot(Replay):
         # TODO # add dictionary for additional scalar information: key -> value
         dict_add_values = {}
         
+        queue_length = 0
+        response_time = 0.0
+        tick_duration = 0.0
+        step_budget = 1.0
+        reopt_budget = 1.0
+        is_lag = False
+        rt_injected = 0
+        rt_processed = 0
+        rt_timed_out = 0
+        queue_requests = []
+        if getattr(self, "is_realtime", False):
+            if self.rt_rq_df is not None and not self.rt_rq_df.empty:
+                active_q = self.rt_rq_df[(self.rt_rq_df["sim_enqueue_time"] <= self.replay_time) & (self.rt_rq_df["sim_dequeue_time"] > self.replay_time)]
+                queue_length = len(active_q)
+                rt_injected = len(self.rt_rq_df[self.rt_rq_df["sim_enqueue_time"] <= self.replay_time])
+                past_rq = self.rt_rq_df[self.rt_rq_df["sim_dequeue_time"] <= self.replay_time]
+                rt_processed = len(past_rq[past_rq["status"] == "processed"])
+                rt_timed_out = len(past_rq[past_rq["status"] == "timed_out"])
+                recent_rq = past_rq[past_rq["sim_dequeue_time"] >= self.replay_time - CUSTOMER_SMOOTH_TIME]
+                if not recent_rq.empty:
+                    response_time = float(recent_rq["scaled_response_time_s"].mean())
+                elif not past_rq.empty:
+                    response_time = float(past_rq["scaled_response_time_s"].iloc[-1])
+
+                # Build active and recently finished queue items list
+                RECENT_FADE_S = 10.0
+                q_mask = (self.rt_rq_df["sim_enqueue_time"] <= self.replay_time) & (self.rt_rq_df["sim_dequeue_time"] + RECENT_FADE_S >= self.replay_time)
+                sub_q_df = self.rt_rq_df[q_mask].tail(14)
+                for _, rq_row in sub_q_df.iterrows():
+                    enq_t = rq_row["sim_enqueue_time"]
+                    deq_t = rq_row["sim_dequeue_time"]
+                    status = rq_row["status"]
+                    if self.replay_time < deq_t:
+                        # Waiting or processing in fleet control
+                        is_processing = (deq_t - self.replay_time) <= max(tick_duration, 1.0)
+                        state = "processing" if is_processing else "waiting"
+                        elapsed_s = self.replay_time - enq_t
+                    else:
+                        state = "timed_out" if status == "timed_out" else "processed"
+                        elapsed_s = deq_t - enq_t
+                    queue_requests.append({
+                        "rid": str(rq_row["rid"]),
+                        "elapsed_s": max(0.0, float(elapsed_s)),
+                        "state": state
+                    })
+
+            if self.rt_tick_df is not None and not self.rt_tick_df.empty:
+                past_ticks = self.rt_tick_df[self.rt_tick_df["sim_time"] <= self.replay_time]
+                if not past_ticks.empty:
+                    latest_tick = past_ticks.iloc[-1]
+                    tick_duration = float(latest_tick.get("scaled_tick_duration_s", latest_tick.get("tick_duration_s", 0.0)))
+                    step_budget = float(latest_tick.get("step_budget_s", 1.0))
+                    reopt_budget = float(latest_tick.get("reopt_budget_s", step_budget))
+                    is_lag = bool(latest_tick.get("is_lag", False)) or (tick_duration > step_budget)
+
         info_dict = {"simulation_time": sim_time,
                      "sim_time_float": self.replay_time/3600.0,
                      "veh_coord_status_df": list_pos_df,
@@ -805,6 +903,16 @@ class ReplayPyPlot(Replay):
                      "rejected_users": rejected_users,
                      "timed_out_users": timed_out_users,
                      "is_realtime": getattr(self, "is_realtime", False),
+                     "queue_length": queue_length,
+                     "queue_requests": queue_requests,
+                     "response_time": response_time,
+                     "tick_duration": tick_duration,
+                     "step_budget": step_budget,
+                     "reopt_budget": reopt_budget,
+                     "is_lag": is_lag,
+                     "rt_injected": rt_injected,
+                     "rt_processed": rt_processed,
+                     "rt_timed_out": rt_timed_out,
                      "end_time": int(self.sim_end_time/self._time_step),
                      "avg_wait_time": avg_wait_time,
                      "avg_ride_time": avg_ride_time,
@@ -815,6 +923,9 @@ class ReplayPyPlot(Replay):
                      "plot_1": self.plot_1,
                      "plot_2": self.plot_2,
                      "plot_3": self.plot_3,
+                     "plot_4": self.plot_4,
+                     "plot_5": self.plot_5,
+                     "plot_6": self.plot_6,
                      "plot_args": self.plot_args,
                      "color_list": self.color_list}
 
