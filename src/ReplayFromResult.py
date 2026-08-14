@@ -838,6 +838,7 @@ class ReplayPyPlot(Replay):
         step_budget = 1.0
         reopt_budget = 1.0
         is_lag = False
+        is_irrecoverable_lag = False
         rt_injected = 0
         rt_processed = 0
         rt_timed_out = 0
@@ -885,7 +886,10 @@ class ReplayPyPlot(Replay):
                     tick_duration = float(latest_tick.get("scaled_tick_duration_s", latest_tick.get("tick_duration_s", 0.0)))
                     step_budget = float(latest_tick.get("step_budget_s", 1.0))
                     reopt_budget = float(latest_tick.get("reopt_budget_s", step_budget))
-                    is_lag = bool(latest_tick.get("is_lag", False)) or (tick_duration > step_budget)
+                    raw_lag = latest_tick.get("is_lag")
+                    raw_irrec = latest_tick.get("is_irrecoverable_lag")
+                    is_lag = (pd.notna(raw_lag) and bool(raw_lag)) or (tick_duration > step_budget)
+                    is_irrecoverable_lag = (pd.notna(raw_irrec) and bool(raw_irrec)) or (tick_duration > reopt_budget)
 
         info_dict = {"simulation_time": sim_time,
                      "sim_time_float": self.replay_time/3600.0,
@@ -910,6 +914,7 @@ class ReplayPyPlot(Replay):
                      "step_budget": step_budget,
                      "reopt_budget": reopt_budget,
                      "is_lag": is_lag,
+                     "is_irrecoverable_lag": is_irrecoverable_lag,
                      "rt_injected": rt_injected,
                      "rt_processed": rt_processed,
                      "rt_timed_out": rt_timed_out,

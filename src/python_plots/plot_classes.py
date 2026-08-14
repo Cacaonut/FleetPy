@@ -20,7 +20,7 @@ FIG_SIZE = (15,10)
 # Number of historical points to be displayed on the x-axis
 PLOT_LENGTH = 200
 # Delay between frames in milliseconds
-REALTIME_UPDATE_INTERVAL = 200
+REALTIME_UPDATE_INTERVAL = 0
 VEHICLE_POINT_SIZE = 12
 CTX_PROVIDER = ctx.providers.CartoDB.Positron# ctx.providers.Stamen.TonerLite
 BOARDER_SIZE = 1000
@@ -90,6 +90,7 @@ class PyPlot(Process):
         self._step_budgets = []
         self._reopt_budgets = []
         self._lag_flags = []
+        self._irrec_lag_flags = []
         
         self._key_to_plot_func = {
             'status_count': self._create_status_count_plot,
@@ -198,6 +199,7 @@ class PyPlot(Process):
         self._step_budgets.append(self.shared_dict.get("step_budget", 1.0))
         self._reopt_budgets.append(self.shared_dict.get("reopt_budget", 1.0))
         self._lag_flags.append(self.shared_dict.get("is_lag", False))
+        self._irrec_lag_flags.append(self.shared_dict.get("is_irrecoverable_lag", False))
 
         for idx, ax in enumerate(self.plot_axes):
             plot_key = self.shared_dict.get(f"plot_{idx + 1}")
@@ -460,15 +462,21 @@ class PyPlot(Process):
         resp_t = self.shared_dict.get("response_time", 0.0)
         tick_d = self.shared_dict.get("tick_duration", 0.0)
         step_b = self.shared_dict.get("step_budget", 1.0)
-        is_lag = self.shared_dict.get("is_lag", False)
+        reopt_b = self.shared_dict.get("reopt_budget", step_b)
+        is_irrecoverable_lag = self.shared_dict.get("is_irrecoverable_lag", False) or (tick_d > reopt_b)
+        is_lag = self.shared_dict.get("is_lag", False) or (tick_d > step_b)
         
         # Status Badge
-        if is_lag:
-            status_text = f"TICK LAG ({tick_d:.2f}s > {step_b:.1f}s)"
+        if is_irrecoverable_lag:
+            status_text = f"IRRECOVERABLE LAG ({tick_d:.2f}s > {reopt_b:.1f}s)"
             status_bg = "#ffcccc"
             status_fg = "#990000"
+        elif is_lag:
+            status_text = f"MINOR LAG ({tick_d:.2f}s > {step_b:.1f}s)"
+            status_bg = "#fff3cd"
+            status_fg = "#856404"
         else:
-            status_text = f"REAL-TIME OK ({tick_d:.2f}s < {step_b:.1f}s)"
+            status_text = f"REAL-TIME OK ({tick_d:.2f}s <= {step_b:.1f}s)"
             status_bg = "#d4edda"
             status_fg = "#155724"
             

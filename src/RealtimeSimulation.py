@@ -312,6 +312,14 @@ class RealtimeSimulation(FleetSimulationBase):
         super()._update_realtime_plots_dict(sim_time)
         if self._shared_dict is not None:
             self._shared_dict["is_realtime"] = True
+            with self._metrics._lock:
+                if self._metrics.tick_records:
+                    latest = self._metrics.tick_records[-1]
+                    self._shared_dict["tick_duration"] = latest.get("scaled_tick_duration_s", latest.get("tick_duration_s", 0.0))
+                    self._shared_dict["step_budget"] = latest.get("step_budget_s", 1.0)
+                    self._shared_dict["reopt_budget"] = latest.get("reopt_budget_s", 1.0)
+                    self._shared_dict["is_lag"] = latest.get("is_lag", False)
+                    self._shared_dict["is_irrecoverable_lag"] = latest.get("is_irrecoverable_lag", False)
 
     # ----- demand thread -----
     def _demand_thread(self):
