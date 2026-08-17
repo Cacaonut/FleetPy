@@ -234,7 +234,8 @@ class AlonsoMoraAssignment(BatchAssignmentAlgorithmBase):
             assigned_key = self.current_assignments[vid]
             if not self.rtv_obj.get(assigned_key):
                 LOG.debug(f"create v2rb {assigned_key}")
-                assigned_plan = self.external_assignments[vid][1]
+                ext_tuple = self.external_assignments.get(vid)
+                assigned_plan = ext_tuple[1] if ext_tuple is not None else self.fleetcontrol.veh_plans[vid]
                 LOG.debug(f"externally assigned plan: {assigned_plan}")
                 assigned_v2rb = V2RB(self.routing_engine, self.active_requests, sim_time, assigned_key, self.veh_objs[vid], self.std_bt, self.add_bt, self.objective_function, orig_veh_plans=[assigned_plan])
                 self._addRtvKey(assigned_key, assigned_v2rb)
@@ -1373,7 +1374,8 @@ class AlonsoMoraAssignment(BatchAssignmentAlgorithmBase):
         if assigned_v2rb is None:
             #LOG.warning("assigned rtv-key not created after build! {} for vid {}".format(assigned_key, vid))
             #LOG.warning("external assignments: {}".format({x: (str(y[0]), str(y[1])) for x, y in self.external_assignments.items()}))
-            assigned_plan = self.external_assignments[vid][1]
+            ext_tuple = self.external_assignments.get(vid)
+            assigned_plan = ext_tuple[1] if ext_tuple is not None else self.fleetcontrol.veh_plans[vid]
             # try:
             #     feasible = assigned_plan.update_plan(self.veh_objs[vid], self.sim_time, self.routing_engine, keep_time_infeasible = True)
             # except:
@@ -1415,7 +1417,8 @@ class AlonsoMoraAssignment(BatchAssignmentAlgorithmBase):
                 assigned_v2rb = self.rtv_obj.get(assigned_key)
                 if assigned_v2rb is None:
                     #LOG.warning("assigned rtv-key not here to create OBV2RB! {}".format(assigned_key))
-                    assigned_plan = self.external_assignments[vid][1]
+                    ext_tuple = self.external_assignments.get(vid)
+                    assigned_plan = ext_tuple[1] if ext_tuple is not None else self.fleetcontrol.veh_plans[vid]
                     # try:
                     #     feasible = assigned_plan.update_plan(self.veh_objs[vid], self.sim_time, self.routing_engine, keep_time_infeasible = True)
                     # except:

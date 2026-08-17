@@ -271,14 +271,20 @@ def return_pooling_objective_function(vr_control_func_dict:dict)->Callable[[int,
             # value of time term (treat waiting and in-vehicle time the same)
             sum_user_times = 0
             for rid, boarding_info_list in veh_plan.pax_info.items():
-                rq_time = rq_dict[rid].rq_time
+                prq = rq_dict.get(rid)
+                if prq is None:
+                    continue
+                rq_time = prq.rq_time
                 drop_off_time = boarding_info_list[1]
                 sum_user_times += (drop_off_time - rq_time)
                 
             # reassignment penalty
             if reassignment_penalty is not None:
                 for rid in veh_plan.pax_info.keys():
-                    offer = rq_dict[rid].get_current_offer()
+                    prq = rq_dict.get(rid)
+                    if prq is None:
+                        continue
+                    offer = prq.get_current_offer()
                     if offer is not None and offer.get("vid") is not None and offer["vid"] != veh_obj.vid:
                         LOG.debug(f" -> reassigning request {rid} from {offer['vid']} to {veh_obj.vid} with penalty {reassignment_penalty}")
                         assignment_reward -= reassignment_penalty

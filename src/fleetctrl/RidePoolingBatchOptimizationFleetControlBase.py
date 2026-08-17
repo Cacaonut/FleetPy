@@ -353,12 +353,14 @@ class RidePoolingBatchOptimizationFleetControlBase(FleetControlBase):
         self.sim_time = simulation_time
         if self.sim_time % self.optimisation_time_step == 0:
             # LOG.info(f"time for new optimisation at {simulation_time}")
-            self.RPBO_Module.compute_new_vehicle_assignments(self.sim_time, self.vid_finished_VRLs, build_from_scratch=False,
-                                                        new_travel_times=self.new_travel_times_loaded)
-            # LOG.info(f"new assignments computed")
-            self._set_new_assignments()
-            self._clearDataBases()
-            self.RPBO_Module.clear_databases()
+            try:
+                self.RPBO_Module.compute_new_vehicle_assignments(self.sim_time, self.vid_finished_VRLs, build_from_scratch=False,
+                                                            new_travel_times=self.new_travel_times_loaded)
+                # LOG.info(f"new assignments computed")
+                self._set_new_assignments()
+            finally:
+                self._clearDataBases()
+                self.RPBO_Module.clear_databases()
             dt = round(time.perf_counter() - t0, 5)
             output_dict = {G_FCTRL_CT_RQB: dt}
             self._add_to_dynamic_fleetcontrol_output(simulation_time, output_dict)
