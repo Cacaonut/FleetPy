@@ -50,6 +50,12 @@ studies/chicago_case_study/git_info.txt
 !studies/munich_case_study
 studies/munich_case_study/results/*
 studies/munich_case_study/git_info.txt
+!studies/minimal_manhattan_realtime
+studies/minimal_manhattan_realtime/results/*
+studies/minimal_manhattan_realtime/git_info.txt
+!studies/minimal_manhattan_realtime_v2
+studies/minimal_manhattan_realtime_v2/results/*
+studies/minimal_manhattan_realtime_v2/git_info.txt
 
 *zip
 
