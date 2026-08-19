@@ -504,6 +504,10 @@ class AlonsoMoraAssignment(BatchAssignmentAlgorithmBase):
             del self.requests_to_compute[rid]
         except:
             pass
+        try:
+            del self.requests_to_compute_in_next_step[rid]
+        except:
+            pass
 
         if self.alonso_mora_parallelization_manager is not None:
             self.alonso_mora_parallelization_manager.delete_request(self.fo_id, rid)
@@ -816,7 +820,9 @@ class AlonsoMoraAssignment(BatchAssignmentAlgorithmBase):
             rids_to_compute_to_rq = {}
         for rid in self.requests_to_compute.keys():
             vid_dict = {}  # vid -> tt
-            prq = self.active_requests[rid]
+            prq = self.active_requests.get(rid)
+            if prq is None:
+                continue
             if not self.alonso_mora_parallelization_manager:
                 # get routing results in single processing
                 o_pos, _, latest_pu = prq.get_o_stop_info()
