@@ -353,9 +353,39 @@ class RidePoolingBatchOptimizationFleetControlBase(FleetControlBase):
         self.sim_time = simulation_time
         if self.sim_time % self.optimisation_time_step == 0:
             # LOG.info(f"time for new optimisation at {simulation_time}")
+            from src.fleetctrl.pooling.batch.BatchAssignmentAlgorithmBase import SimulationVehicleStruct
+            veh_objs_to_build = {}
+            for veh_obj in self.sim_vehicles:
+                veh_objs_to_build[veh_obj.vid] = SimulationVehicleStruct(veh_obj, self.veh_plans.get(veh_obj.vid, VehiclePlan(veh_obj, self.sim_time, self.routing_engine, [])), simulation_time, self.routing_engine)
+            vid_finished_VRLs_copy = {vid: lst[:] for vid, lst in self.vid_finished_VRLs.items()}
+            
+            orig_active = self.RPBO_Module.active_requests
+            orig_unass = self.RPBO_Module.unassigned_requests
+            orig_v2r = self.RPBO_Module.v2r_locked
+            orig_r2v = self.RPBO_Module.r2v_locked
+            orig_cons = self.RPBO_Module.rid_to_consider_for_global_optimisation
+            
+            self.RPBO_Module.active_requests = orig_active.copy()
+            self.RPBO_Module.unassigned_requests = orig_unass.copy()
+            self.RPBO_Module.v2r_locked = {k: v.copy() for k, v in orig_v2r.items()}
+            self.RPBO_Module.r2v_locked = orig_r2v.copy()
+            self.RPBO_Module.rid_to_consider_for_global_optimisation = orig_cons.copy()
+
+            sim_lock = getattr(self, "_sim_state_lock", None)
+            if sim_lock:
+                sim_lock.release()
             try:
-                self.RPBO_Module.compute_new_vehicle_assignments(self.sim_time, self.vid_finished_VRLs, build_from_scratch=False,
-                                                            new_travel_times=self.new_travel_times_loaded)
+                self.RPBO_Module.compute_new_vehicle_assignments(self.sim_time, vid_finished_VRLs_copy, veh_objs_to_build=veh_objs_to_build, build_from_scratch=False, new_travel_times=self.new_travel_times_loaded)
+            finally:
+                if sim_lock:
+                    sim_lock.acquire()
+                self.RPBO_Module.active_requests = orig_active
+                self.RPBO_Module.unassigned_requests = orig_unass
+                self.RPBO_Module.v2r_locked = orig_v2r
+                self.RPBO_Module.r2v_locked = orig_r2v
+                self.RPBO_Module.rid_to_consider_for_global_optimisation = orig_cons
+
+            try:
                 # LOG.info(f"new assignments computed")
                 self._set_new_assignments()
             finally:

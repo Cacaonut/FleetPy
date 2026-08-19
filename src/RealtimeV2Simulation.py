@@ -165,8 +165,10 @@ class RealtimeV2Simulation(RealtimeSimulation):
 
             success = True
             try:
-                with self._state_lock:
-                    for op in self.operators:
+                for op in self.operators:
+                    if not hasattr(op, "_sim_state_lock"):
+                        op._sim_state_lock = self._state_lock
+                    with self._state_lock:
                         op.time_trigger(sim_time)
             except Exception as e:
                 LOG.error(f"Error during fleet control optimization at sim_time={sim_time}: {e}", exc_info=True)
