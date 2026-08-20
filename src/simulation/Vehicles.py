@@ -347,19 +347,12 @@ class SimulationVehicle:
         LOG.debug(f" -> force: {force_ignore_lock}")
         start_flag = True
         if self.assigned_route:
-            if list_route_legs and self.assigned_route[0].locked and not list_route_legs[0].locked:
-                list_route_legs[0].locked = True
-                if list_route_legs[0] != self.assigned_route[0]:
-                    list_route_legs[0].locked = False
             if not list_route_legs or list_route_legs[0] != self.assigned_route[0]:
                 if list_route_legs and self.status == VRL_STATES.WAITING and list_route_legs[0].earliest_start_time > sim_time: # dont write multiple waiting legs
                     LOG.debug(f"update waiting time for {self.vid} at {sim_time} from {self.cl_remaining_time} to {list_route_legs[0].earliest_start_time - sim_time}")
                     self.cl_remaining_time = list_route_legs[0].earliest_start_time - sim_time
                     list_route_legs = [self.assigned_route[0]] + list_route_legs
                     list_route_legs[0].duration = list_route_legs[1].earliest_start_time - self.cl_start_time
-                    start_flag = False
-                elif self.assigned_route[0].locked:
-                    list_route_legs = [self.assigned_route[0]] + [x for x in list_route_legs if x != self.assigned_route[0]]
                     start_flag = False
                 else:
                     if not self.assigned_route[0].locked:

@@ -927,14 +927,15 @@ class VehiclePlan:
                     self.pax_info[rid] = [c_time]
                     c_pax[rid] = 1
                 for rid in pstop.get_list_alighting_rids():
-                    if rid not in self.pax_info:
-                        self.pax_info[rid] = [c_time]
-                    else:
-                        self.pax_info[rid].append(c_time)
+                    self.pax_info[rid].append(c_time)
                     try:
                         del c_pax[rid]
                     except KeyError:
                         LOG.warning(f"update_tt_and_check_plan(): try to remove a rid that is not on board!")
+                        LOG.warning(f"{self}")
+                        is_feasible = False
+                        infeasible_index = i
+                        raise EnvironmentError
                 # LOG.debug("pax info {}".format(self.pax_info))
                 latest_time = pstop.get_latest_start_time(self.pax_info)
                 if c_time > latest_time:

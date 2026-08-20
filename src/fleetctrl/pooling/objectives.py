@@ -137,10 +137,7 @@ def return_pooling_objective_function(vr_control_func_dict:dict)->Callable[[int,
             sum_user_times = 0
             for rid, boarding_info_list in veh_plan.pax_info.items():
                 rq_time = rq_dict[rid].rq_time
-                if len(boarding_info_list) >= 2:
-                    drop_off_time = boarding_info_list[1]
-                else:
-                    drop_off_time = simulation_time
+                drop_off_time = boarding_info_list[1]
                 sum_user_times += (drop_off_time - rq_time)
             # utility is negative value of end_time - simulation_time
             return sum_user_times  - assignment_reward
@@ -192,10 +189,7 @@ def return_pooling_objective_function(vr_control_func_dict:dict)->Callable[[int,
             sum_user_times = 0
             for rid, boarding_info_list in veh_plan.pax_info.items():
                 rq_time = rq_dict[rid].rq_time
-                if len(boarding_info_list) >= 2:
-                    drop_off_time = boarding_info_list[1]
-                else:
-                    drop_off_time = simulation_time
+                drop_off_time = boarding_info_list[1]
                 sum_user_times += (drop_off_time - rq_time)
 
             if veh_plan.list_plan_stops:
@@ -235,10 +229,7 @@ def return_pooling_objective_function(vr_control_func_dict:dict)->Callable[[int,
             sum_user_times = 0
             for rid, boarding_info_list in veh_plan.pax_info.items():
                 rq_time = rq_dict[rid].rq_time
-                if len(boarding_info_list) >= 2:
-                    drop_off_time = boarding_info_list[1]
-                else:
-                    drop_off_time = simulation_time
+                drop_off_time = boarding_info_list[1]
                 sum_user_times += (drop_off_time - rq_time)
             # vehicle costs are taken from simulation vehicle (cent per meter)
             # value of travel time is scenario input (cent per second)
@@ -280,23 +271,14 @@ def return_pooling_objective_function(vr_control_func_dict:dict)->Callable[[int,
             # value of time term (treat waiting and in-vehicle time the same)
             sum_user_times = 0
             for rid, boarding_info_list in veh_plan.pax_info.items():
-                prq = rq_dict.get(rid)
-                if prq is None:
-                    continue
-                rq_time = prq.rq_time
-                if len(boarding_info_list) >= 2:
-                    drop_off_time = boarding_info_list[1]
-                else:
-                    drop_off_time = simulation_time
+                rq_time = rq_dict[rid].rq_time
+                drop_off_time = boarding_info_list[1]
                 sum_user_times += (drop_off_time - rq_time)
                 
             # reassignment penalty
             if reassignment_penalty is not None:
                 for rid in veh_plan.pax_info.keys():
-                    prq = rq_dict.get(rid)
-                    if prq is None:
-                        continue
-                    offer = prq.get_current_offer()
+                    offer = rq_dict[rid].get_current_offer()
                     if offer is not None and offer.get("vid") is not None and offer["vid"] != veh_obj.vid:
                         LOG.debug(f" -> reassigning request {rid} from {offer['vid']} to {veh_obj.vid} with penalty {reassignment_penalty}")
                         assignment_reward -= reassignment_penalty
@@ -351,10 +333,7 @@ def return_pooling_objective_function(vr_control_func_dict:dict)->Callable[[int,
                 ept = rq_dict[rid].get_o_stop_info()[1]
                 if ignore_user_cost_horizon is not None and ept - simulation_time > ignore_user_cost_horizon:
                     continue
-                if len(boarding_info_list) >= 2:
-                    drop_off_time = boarding_info_list[1]
-                else:
-                    drop_off_time = simulation_time
+                drop_off_time = boarding_info_list[1]
                 sum_user_times += (drop_off_time - ept)
             # vehicle costs are taken from simulation vehicle (cent per meter)
             # value of travel time is scenario input (cent per second)
@@ -402,10 +381,7 @@ def return_pooling_objective_function(vr_control_func_dict:dict)->Callable[[int,
             sum_user_times = 0
             for rid, boarding_info_list in veh_plan.pax_info.items():
                 rq_time = rq_dict[rid].rq_time
-                if len(boarding_info_list) >= 2:
-                    drop_off_time = boarding_info_list[1]
-                else:
-                    drop_off_time = simulation_time
+                drop_off_time = boarding_info_list[1]
                 sum_user_times += (drop_off_time - rq_time)
             # vehicle costs are taken from simulation vehicle (cent per meter)
             # value of travel time is scenario input (cent per second)
@@ -444,10 +420,7 @@ def return_pooling_objective_function(vr_control_func_dict:dict)->Callable[[int,
             for rid, boarding_info_list in veh_plan.pax_info.items():
                 rq_time = rq_dict[rid].rq_time
                 walking_time_end = rq_dict[rid].walking_time_end    #walking time start allready included in interval rq-time -> drop_off_time
-                if len(boarding_info_list) >= 2:
-                    drop_off_time = boarding_info_list[1]
-                else:
-                    drop_off_time = simulation_time
+                drop_off_time = boarding_info_list[1]
                 sum_user_times += (drop_off_time - rq_time) + walking_time_end
             # vehicle costs are taken from simulation vehicle (cent per meter)
             # value of travel time is scenario input (cent per second)
@@ -494,10 +467,7 @@ def return_pooling_objective_function(vr_control_func_dict:dict)->Callable[[int,
             sum_user_times = 0
             for rid, boarding_info_list in veh_plan.pax_info.items():
                 rq_time = rq_dict[rid].rq_time
-                if len(boarding_info_list) >= 2:
-                    drop_off_time = boarding_info_list[1]
-                else:
-                    drop_off_time = simulation_time
+                drop_off_time = boarding_info_list[1]
                 sum_user_times += (drop_off_time - rq_time)
             # vehicle costs are taken from simulation vehicle (cent per meter)
             # value of travel time is scenario input (cent per second)

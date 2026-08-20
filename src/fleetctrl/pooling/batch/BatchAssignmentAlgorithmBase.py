@@ -267,9 +267,8 @@ class BatchAssignmentAlgorithmBase(metaclass=ABCMeta):
         :param rid: plan_request_id
         :param vid: vehicle obj id """
         LOG.debug("locked dicts: {} | {}".format(self.v2r_locked, self.r2v_locked))
-        if vid in self.v2r_locked:
-            self.v2r_locked[vid].pop(rid, None)
-        self.r2v_locked.pop(rid, None)
+        del self.v2r_locked[vid][rid]
+        del self.r2v_locked[rid]
         sub_rids = self._get_all_rids_representing_this_base_rid(rid)
         for sub_rid in list(sub_rids):
             self.delete_request(sub_rid)
